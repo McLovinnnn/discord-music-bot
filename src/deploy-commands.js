@@ -1,10 +1,15 @@
 'use strict';
 
+// Manual/standalone command registration. Not required for normal operation
+// any more - src/index.js registers commands automatically on every boot
+// (see REGISTER_COMMANDS_ON_BOOT in .env.example). This script is still
+// useful for forcing an immediate re-register without restarting the bot,
+// or for registering against a different token/guild than what's currently
+// deployed.
+
 require('dotenv').config();
 
-const fs = require('node:fs');
-const path = require('node:path');
-const { REST, Routes } = require('discord.js');
+const { registerCommands } = require('./lib/commandRegistry');
 
 const { DISCORD_TOKEN, CLIENT_ID, GUILD_ID } = process.env;
 
@@ -13,27 +18,13 @@ if (!DISCORD_TOKEN || !CLIENT_ID) {
   process.exit(1);
 }
 
-const commandsDir = path.join(__dirname, 'commands');
-const commands = fs
-  .readdirSync(commandsDir)
-  .filter((f) => f.endsWith('.js'))
-  .map((f) => require(path.join(commandsDir, f)).data.toJSON());
-
-const rest = new REST({ version: '10' }).setToken(DISCORD_TOKEN);
-
 (async () => {
   try {
-    const names = commands.map((c) => c.name).join(', ');
-
-    if (GUILD_ID) {
-      // Guild-scoped: registers instantly. Fine permanently for a bot that
-      // only ever lives in one server.
-      await rest.put(Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID), { body: commands });
-      console.log(`Registered ${commands.length} guild command(s) in guild ${GUILD_ID}: ${names}`);
+    const { scope, names } = await registerCommands({ token: DISCORD_TOKEN, clientId: CLIENT_ID, guildId: GUILD_ID });
+    if (scope === 'guild') {
+      console.log(`Registered ${names.length} guild command(s) in guild ${GUILD_ID}: ${names.join(', ')}`);
     } else {
-      // Global: can take up to an hour to propagate to all servers.
-      await rest.put(Routes.applicationCommands(CLIENT_ID), { body: commands });
-      console.log(`Registered ${commands.length} global command(s): ${names}`);
+      console.log(`Registered ${names.length} global command(s): ${names.join(', ')}`);
     }
   } catch (err) {
     console.error('Failed to register commands:', err);

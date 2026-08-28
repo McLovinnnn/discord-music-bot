@@ -8,6 +8,9 @@ const crypto = require('node:crypto');
 const { Client, Collection, GatewayIntentBits, Events } = require('discord.js');
 const queueManager = require('./lib/queueManager');
 const { checkAlone } = require('./lib/aloneWatcher');
+const { registerCommands } = require('./lib/commandRegistry');
+
+const REGISTER_ON_BOOT = (process.env.REGISTER_COMMANDS_ON_BOOT ?? 'true').toLowerCase() !== 'false';
 
 if (!process.env.DISCORD_TOKEN || !process.env.CLIENT_ID) {
   console.error('Missing DISCORD_TOKEN and/or CLIENT_ID in the environment. Copy .env.example to .env and fill them in (or set them as Pterodactyl Startup Variables).');
@@ -109,4 +112,28 @@ process.on('uncaughtException', (err) => {
   process.exit(1);
 });
 
-client.login(process.env.DISCORD_TOKEN);
+async function main() {
+  // Registers slash commands on every boot so there's no separate manual
+  // step to remember - important on hosts like Pterodactyl where the
+  // console is just stdin piped to this process, not a shell you can run
+  // `npm run register-commands` in. The PUT overwrites the full command
+  // set each time, so doing this on every boot is safe. Guild-scoped
+  // (GUILD_ID set) registers instantly; global can take up to ~1hr to
+  // propagate - see .env.example / README.
+  if (REGISTER_ON_BOOT) {
+    try {
+      const { scope, names } = await registerCommands({
+        token: process.env.DISCORD_TOKEN,
+        clientId: process.env.CLIENT_ID,
+        guildId: process.env.GUILD_ID,
+      });
+      console.log(`Registered ${names.length} ${scope} slash command(s): ${names.join(', ')}`);
+    } catch (err) {
+      console.error('Failed to register slash commands on boot (will retry next boot):', err.message);
+    }
+  }
+
+  await client.login(process.env.DISCORD_TOKEN);
+}
+
+main();

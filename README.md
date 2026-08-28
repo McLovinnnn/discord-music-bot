@@ -14,6 +14,8 @@ on a [Pterodactyl](https://pterodactyl.io/) panel.
 - Automatically reconnects a live stream if the upstream connection drops.
 - Automatically leaves the voice channel after being alone in it for
   `AUTO_DISCONNECT_MINUTES` (default 5).
+- Automatically (re-)registers its slash commands with Discord on every
+  boot — no separate manual step, no shell access needed on the host.
 - On every boot, checks GitHub for a newer commit and pulls it in before
   starting (see [Auto-update](#auto-update)).
 
@@ -42,9 +44,8 @@ npm install
 cp .env.example .env
 # fill in DISCORD_TOKEN, CLIENT_ID, and GUILD_ID (a dev/test guild ID -
 # guild-scoped command registration is instant, global can take up to an hour)
-npm run register-commands
 npm run check-stream        # confirms ffmpeg can pull audio from the BBC URL
-npm start
+npm start                   # also registers slash commands automatically
 ```
 
 Then, in your test guild: join a voice channel and run `/radio`.
@@ -60,7 +61,7 @@ Then, in your test guild: join a voice channel and run `/radio`.
 - Startup command `npm install && node boot.js`, a "ready" detection string, and `^C` (SIGINT) as the graceful stop signal, which `src/index.js` already handles.
 - All the config variables below, pre-declared with descriptions and defaults, ready to fill in per-server.
 
-After importing, create a new server using this egg, fill in `Discord Bot Token` / `Discord Application (Client) ID` / `Guild ID` in the server's Startup tab, and install. Then see [Registering commands](#registering-commands) below.
+After importing, create a new server using this egg, fill in `Discord Bot Token` / `Discord Application (Client) ID` / `Guild ID` in the server's Startup tab, and install. Slash commands register themselves automatically on the first boot — see [Registering commands](#registering-commands) below.
 
 If you'd rather configure a generic Node.js egg by hand instead, the manual details are below.
 
@@ -101,6 +102,7 @@ never commit a `.env` file:
 | `AUTO_DISCONNECT_MINUTES` | no | Default `5`. |
 | `AUTO_UPDATE` | no | Default `true`. Set `false` to disable the boot-time GitHub check. |
 | `UPDATE_BRANCH` | no | Default `main`. |
+| `REGISTER_COMMANDS_ON_BOOT` | no | Default `true`. Set `false` to disable automatic slash command registration on boot. |
 
 ### Startup command
 
@@ -119,9 +121,13 @@ templates still force a port allocation; that's harmless and can be ignored.
 
 ### Registering commands
 
-Run `npm run register-commands` once from the panel's console (or locally
-against the same bot token) after first deploying, and again any time you add
-or change a command.
+This happens automatically on every boot (`REGISTER_COMMANDS_ON_BOOT`,
+default `true`) — there's no manual step. This matters specifically on
+Pterodactyl: the panel's server console is stdin piped directly to the
+running bot process, not a shell, so there's no way to separately run
+`npm run register-commands` there while the bot is up. If you ever do want
+to run it manually (e.g. locally against a different token/guild), that
+script is still available: `npm run register-commands`.
 
 ## Auto-update
 
@@ -176,7 +182,7 @@ discord-music-bot/
 ├── scripts/check-stream.js    # standalone ffmpeg smoke test
 └── src/
     ├── index.js                # Discord client, command dispatch, alone-disconnect wiring
-    ├── deploy-commands.js      # registers slash commands
+    ├── deploy-commands.js      # manual/standalone command registration (optional - see below)
     ├── commands/                # one file per slash command
     └── lib/
         ├── queueManager.js      # per-guild queue registry
@@ -185,5 +191,6 @@ discord-music-bot/
         ├── track.js               # track factory
         ├── presets.js             # named stream presets (BBC Radio 2, etc.)
         ├── enqueue.js             # shared /play + /radio voice-join/enqueue logic
-        └── aloneWatcher.js        # alone-in-channel auto-disconnect timer
+        ├── aloneWatcher.js        # alone-in-channel auto-disconnect timer
+        └── commandRegistry.js     # shared slash-command registration logic (used by index.js and deploy-commands.js)
 ```
