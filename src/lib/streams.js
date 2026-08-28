@@ -102,6 +102,20 @@ function createResource(track, { volume = 1 } = {}) {
     ffmpegProcess.on('error', (err) => {
       console.error(`[ffmpeg:${track.title}] process error:`, err);
     });
+    // If ffmpeg gets killed outright (e.g. the container's memory limit
+    // OOM-kills it) it can die without ever writing to stderr - stderr data
+    // and process errors alone won't show that. This is the only place that
+    // reliably surfaces it: a SIGKILL exit with a short lifetime and no
+    // preceding log output is the signature of an OOM kill, not a stream/
+    // network problem.
+    const spawnedAt = Date.now();
+    ffmpegProcess.on('exit', (code, signal) => {
+      const aliveMs = Date.now() - spawnedAt;
+      console.warn(`[ffmpeg:${track.title}] process exited after ${aliveMs}ms (code=${code}, signal=${signal})`);
+      if (signal === 'SIGKILL' && aliveMs < 5000) {
+        console.warn(`[ffmpeg:${track.title}] this looks like an OOM kill (killed almost immediately, no prior output) - check the server's memory limit in Pterodactyl.`);
+      }
+    });
   }
 
   ffmpeg.on('error', (err) => {
