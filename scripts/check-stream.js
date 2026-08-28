@@ -27,7 +27,10 @@ try {
 console.log(`Checking stream: ${url}`);
 console.log(`Using ffmpeg binary: ${ffmpegPath}`);
 
-const child = spawn(ffmpegPath, buildFfmpegArgs(url));
+// Spawned directly here (unlike src/lib/streams.js, which goes through
+// prism-media's FFmpeg class and gets "pipe:1" appended for it automatically)
+// so the output target has to be added explicitly.
+const child = spawn(ffmpegPath, [...buildFfmpegArgs(url), 'pipe:1']);
 
 let bytesReceived = 0;
 let settled = false;

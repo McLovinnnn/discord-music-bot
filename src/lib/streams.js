@@ -48,6 +48,13 @@ if (process.env.FFMPEG_PATH && !fs.existsSync(process.env.FFMPEG_PATH)) {
  *   inlineVolume transformer needs raw samples to apply /volume; it can't run
  *   on already-Opus-encoded frames.
  *
+ * Deliberately does NOT include an output target (e.g. "pipe:1") - callers
+ * that spawn ffmpeg directly (scripts/check-stream.js) need to append one
+ * themselves, but createResource() below goes through prism-media's
+ * FFmpeg class, which always appends "pipe:1" to whatever args it's given.
+ * Adding it here too would specify the output twice and break playback -
+ * see the git history for that exact bug.
+ *
  * @param {string} url
  * @returns {string[]}
  */
@@ -62,7 +69,6 @@ function buildFfmpegArgs(url) {
     '-f', 's16le',
     '-ar', '48000',
     '-ac', '2',
-    'pipe:1',
   ];
 }
 
