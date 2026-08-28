@@ -1,5 +1,6 @@
 'use strict';
 
+const fs = require('node:fs');
 const prism = require('prism-media');
 const { createAudioResource, StreamType } = require('@discordjs/voice');
 
@@ -14,6 +15,19 @@ if (!process.env.FFMPEG_PATH) {
     // ffmpeg-static not resolvable for some reason - fall through and let
     // prism-media try its own detection / a system "ffmpeg" on PATH.
   }
+}
+
+// ffmpeg-static's binary is downloaded by its own postinstall script, which
+// some npm versions skip by default unless explicitly trusted (see this
+// repo's package.json "allowScripts"). If that ever gets skipped anyway
+// (e.g. a stricter npm config, --ignore-scripts), fail loudly and clearly at
+// startup instead of a cryptic ENOENT the first time someone runs /play.
+if (process.env.FFMPEG_PATH && !fs.existsSync(process.env.FFMPEG_PATH)) {
+  console.error(
+    `FFmpeg binary not found at "${process.env.FFMPEG_PATH}". ffmpeg-static's install script may have been skipped ` +
+    `(check for "install scripts blocked"/"allowScripts" warnings during npm install). Try: ` +
+    `node node_modules/ffmpeg-static/install.js`
+  );
 }
 
 /**
