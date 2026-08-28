@@ -157,6 +157,22 @@ from the Pterodactyl panel.
   `-- <url>` to test a different stream) — it isolates the ffmpeg/network
   path from the rest of the bot. If it fails on the Pterodactyl host but
   works locally, see the geo-blocking note below.
+- **Bot joins the channel but immediately says "Lost connection... attempting
+  to reconnect", with `[ffmpeg:...] process exited after N ms (signal=SIGSEGV`
+  or similar in the console**: this means the ffmpeg *binary itself* is
+  crashing on startup, near-instantly, every time — not a network/stream
+  issue. It almost always means the downloaded `ffmpeg-static` binary is bad
+  (corrupted/incomplete download, or the wrong CPU architecture for the
+  host). `npm install` now runs `scripts/ensure-ffmpeg.js` as its postinstall
+  step, which verifies the binary actually runs (not just that a file
+  exists) and re-downloads it if not — so a fresh `npm install` should
+  self-heal this. If it's still broken after that, the host's architecture
+  may not have a published `ffmpeg-static` release at all (see the ARM note
+  below). (If `signal=SIGKILL` instead, that's different — see the memory
+  note below.)
+- **`signal=SIGKILL`, process dies almost instantly, memory limit seems
+  tight**: this is the OOM killer, not a bad binary — increase the server's
+  memory limit in Pterodactyl's Build Configuration.
 - **BBC Radio 2 stream fails only on the server, not locally**: BBC streams
   can be **geo-restricted to the UK**. If your Pterodactyl host's network is
   outside the UK, Akamai may reject the request regardless of correct bot
