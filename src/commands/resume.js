@@ -15,7 +15,7 @@ module.exports = {
     const note = queue.currentTrack.isLive
       ? ' (note: resuming live radio catches up to live — it does not resume from where it left off)'
       : '';
-    queue.resume();
+    await queue.resume();
     await interaction.reply(`Resumed.${note}`);
   },
 };

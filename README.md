@@ -160,16 +160,26 @@ from the Pterodactyl panel.
 - **Bot joins the channel but immediately says "Lost connection... attempting
   to reconnect", with `[ffmpeg:...] process exited after N ms (signal=SIGSEGV`
   or similar in the console**: this means the ffmpeg *binary itself* is
-  crashing on startup, near-instantly, every time — not a network/stream
-  issue. It almost always means the downloaded `ffmpeg-static` binary is bad
-  (corrupted/incomplete download, or the wrong CPU architecture for the
-  host). `npm install` now runs `scripts/ensure-ffmpeg.js` as its postinstall
-  step, which verifies the binary actually runs (not just that a file
-  exists) and re-downloads it if not — so a fresh `npm install` should
-  self-heal this. If it's still broken after that, the host's architecture
-  may not have a published `ffmpeg-static` release at all (see the ARM note
-  below). (If `signal=SIGKILL` instead, that's different — see the memory
-  note below.)
+  crashing, near-instantly, every time — not a network/stream issue. Two
+  possible causes, in the order to check them:
+  1. A bad binary (corrupted/incomplete download, or the wrong CPU
+     architecture for the host). `npm install` runs `scripts/ensure-ffmpeg.js`
+     as its postinstall step specifically to catch and self-heal this — it
+     verifies the binary actually runs (`ffmpeg -version`), not just that a
+     file exists, and re-downloads it if not. Run `npm run check-stream` to
+     confirm the binary itself is fine; if it reports success, this isn't it.
+  2. **A known bug in fully-static ffmpeg builds crashing on DNS lookups**
+     (`ffmpeg-static`'s Linux binary is exactly this kind of build). glibc's
+     NSS mechanism needs to `dlopen()` resolver modules at runtime, which a
+     fully-static binary can't do reliably, especially in a minimal
+     container. This is what actually caused the SIGSEGV during development
+     of this project — see `resolveForFfmpeg()` in `src/lib/streams.js`,
+     which works around it by resolving the hostname in Node (unaffected,
+     since it's dynamically linked) and handing ffmpeg a raw IP with an
+     explicit `Host` header instead, for plain `http://` URLs. If you're
+     still hitting this on an `https://` stream, that workaround doesn't
+     apply (swapping the hostname for an IP would break TLS SNI/certificate
+     validation) — that's a harder, unresolved case.
 - **`signal=SIGKILL`, process dies almost instantly, memory limit seems
   tight**: this is the OOM killer, not a bad binary — increase the server's
   memory limit in Pterodactyl's Build Configuration.

@@ -158,10 +158,10 @@ class GuildQueue {
     const delay = RECONNECT_DELAYS_MS[this.liveReconnectAttempt];
     this.liveReconnectAttempt += 1;
 
-    setTimeout(() => {
+    setTimeout(async () => {
       if (this.destroyed || !this.currentTrack) return;
       try {
-        this._playResource(this.currentTrack);
+        await this._playResource(this.currentTrack);
       } catch (err) {
         console.error(`[GuildQueue:${this.guildId}] reconnect attempt failed:`, err.message);
         this._handleIdle().catch((idleErr) => {
@@ -195,12 +195,19 @@ class GuildQueue {
 
     this.liveReconnectAttempt = 0;
     this.currentTrack = next;
-    this._playResource(next);
+    await this._playResource(next);
   }
 
-  _playResource(track) {
+  async _playResource(track) {
     this._cleanupCurrentStream();
-    const stream = createResource(track, { volume: this.volume });
+    const stream = await createResource(track, { volume: this.volume });
+    // Something else (skip/stop/destroy) may have happened while we were
+    // awaiting DNS resolution/ffmpeg spawn above - don't let a stale resource
+    // clobber whatever's now current.
+    if (this.destroyed || this.currentTrack !== track) {
+      stream.destroy();
+      return;
+    }
     this.currentStream = stream;
     this.player.play(stream.resource);
   }
@@ -238,12 +245,12 @@ class GuildQueue {
     }
   }
 
-  resume() {
+  async resume() {
     if (!this.paused) return;
     this.paused = false;
 
     if (this.currentTrack && this.currentTrack.isLive) {
-      this._playResource(this.currentTrack);
+      await this._playResource(this.currentTrack);
     } else {
       this.player.unpause();
     }

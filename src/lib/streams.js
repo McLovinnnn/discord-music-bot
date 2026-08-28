@@ -1,6 +1,7 @@
 'use strict';
 
 const fs = require('node:fs');
+const dns = require('node:dns').promises;
 const { spawnSync } = require('node:child_process');
 const prism = require('prism-media');
 const { createAudioResource, StreamType } = require('@discordjs/voice');
@@ -46,6 +47,51 @@ if (process.env.FFMPEG_PATH) {
 }
 
 /**
+ * ffmpeg-static's Linux binary is a fully-static build (from
+ * johnvansickle.com). Fully-static glibc binaries are well known to be able
+ * to segfault doing DNS lookups, because glibc's NSS mechanism needs to
+ * dlopen() resolver modules at runtime, which a static binary can't do
+ * reliably - especially in a minimal container image (missing/nonstandard
+ * /etc/nsswitch.conf, etc.). That's the exact crash this project hit: ffmpeg
+ * dying with SIGSEGV within milliseconds, right as it starts resolving the
+ * stream host, with literally nothing logged.
+ *
+ * The fix: resolve the hostname ourselves in Node (which is dynamically
+ * linked and unaffected - this process already does plenty of its own DNS
+ * resolution just to reach Discord's gateway) and hand ffmpeg a raw IP
+ * address instead, with an explicit "Host" header so name-based virtual
+ * hosting/CDN routing (e.g. Akamai) still works correctly. Re-resolving on
+ * every call (i.e. every play and every reconnect attempt) also means this
+ * naturally tracks a CDN's rotating/load-balanced IPs instead of pinning one.
+ *
+ * Only applies to plain http:// URLs. For https://, swapping the hostname
+ * for an IP would break TLS SNI/certificate validation (the certificate
+ * won't match a bare IP), so those are left to ffmpeg's own resolver - which
+ * means an https:// stream could still hit this same bug on an affected
+ * host. In practice this bot's primary use case (BBC Radio 2, and HLS radio
+ * streams generally) tends to be plain HTTP.
+ *
+ * @param {string} url
+ * @returns {Promise<{url: string, headers: string|null}>}
+ */
+async function resolveForFfmpeg(url) {
+  const parsed = new URL(url);
+  if (parsed.protocol !== 'http:') {
+    return { url, headers: null };
+  }
+
+  const hostname = parsed.hostname;
+  try {
+    const { address } = await dns.lookup(hostname, { family: 4 });
+    parsed.hostname = address;
+    return { url: parsed.toString(), headers: `Host: ${hostname}\r\n` };
+  } catch (err) {
+    console.warn(`Failed to pre-resolve "${hostname}" in Node (falling back to ffmpeg's own DNS resolution, which may be unreliable): ${err.message}`);
+    return { url, headers: null };
+  }
+}
+
+/**
  * Build the ffmpeg argument list that turns a direct audio/HLS URL into raw
  * PCM suitable for createAudioResource. Used identically for live and finite
  * tracks - there is no live/non-live branching at this layer, only in
@@ -56,6 +102,8 @@ if (process.env.FFMPEG_PATH) {
  *   defense against an Akamai connection blip, before GuildQueue's own
  *   process-level respawn logic (the second line of defense) ever needs to
  *   trigger.
+ * -headers: only set when resolveForFfmpeg() rewrote the URL to a raw IP -
+ *   restores the original hostname as the Host header (see above).
  * -analyzeduration 0 / -loglevel warning: start playback faster and keep
  *   ffmpeg's stderr limited to things actually worth logging.
  * -f s16le -ar 48000 -ac 2: raw 16-bit PCM, stereo, 48kHz - required (rather
@@ -77,20 +125,27 @@ if (process.env.FFMPEG_PATH) {
  *   this early is often gone before anything at "warning" severity gets
  *   logged, so a noisier level is sometimes the only way to see what ffmpeg
  *   was doing (e.g. "Opening ... for reading") right before it died.
+ * @param {string} [options.headers] - see resolveForFfmpeg().
  * @returns {string[]}
  */
-function buildFfmpegArgs(url, { logLevel = 'warning' } = {}) {
-  return [
+function buildFfmpegArgs(url, { logLevel = 'warning', headers } = {}) {
+  const args = [
     '-reconnect', '1',
     '-reconnect_streamed', '1',
     '-reconnect_delay_max', '5',
+  ];
+  if (headers) {
+    args.push('-headers', headers);
+  }
+  args.push(
     '-i', url,
     '-analyzeduration', '0',
     '-loglevel', logLevel,
     '-f', 's16le',
     '-ar', '48000',
     '-ac', '2',
-  ];
+  );
+  return args;
 }
 
 /**
@@ -103,10 +158,11 @@ function buildFfmpegArgs(url, { logLevel = 'warning' } = {}) {
  * @param {{url: string, title: string}} track
  * @param {object} [options]
  * @param {number} [options.volume] - initial volume, 0-2 (1 = 100%).
- * @returns {{resource: import('@discordjs/voice').AudioResource, ffmpegProcess: import('child_process').ChildProcess, destroy: () => void}}
+ * @returns {Promise<{resource: import('@discordjs/voice').AudioResource, ffmpegProcess: import('child_process').ChildProcess, destroy: () => void}>}
  */
-function createResource(track, { volume = 1 } = {}) {
-  const ffmpeg = new prism.FFmpeg({ args: buildFfmpegArgs(track.url) });
+async function createResource(track, { volume = 1 } = {}) {
+  const { url, headers } = await resolveForFfmpeg(track.url);
+  const ffmpeg = new prism.FFmpeg({ args: buildFfmpegArgs(url, { headers }) });
   const ffmpegProcess = ffmpeg.process;
 
   // ffmpeg's stderr is where Akamai HTTP errors, segment-fetch failures, etc.
@@ -162,4 +218,4 @@ function createResource(track, { volume = 1 } = {}) {
   return { resource, ffmpegProcess, destroy };
 }
 
-module.exports = { createResource, buildFfmpegArgs };
+module.exports = { createResource, buildFfmpegArgs, resolveForFfmpeg };

@@ -12,10 +12,10 @@
 
 const { spawn } = require('child_process');
 const { BBC_RADIO_TWO } = require('../src/lib/presets');
-const { buildFfmpegArgs } = require('../src/lib/streams');
+const { buildFfmpegArgs, resolveForFfmpeg } = require('../src/lib/streams');
 
 const TIMEOUT_MS = 10_000;
-const url = process.argv[2] || BBC_RADIO_TWO.url;
+const inputUrl = process.argv[2] || BBC_RADIO_TWO.url;
 
 let ffmpegPath;
 try {
@@ -24,70 +24,81 @@ try {
   ffmpegPath = 'ffmpeg';
 }
 
-console.log(`Checking stream: ${url}`);
-console.log(`Using ffmpeg binary: ${ffmpegPath}`);
+(async () => {
+  console.log(`Checking stream: ${inputUrl}`);
+  console.log(`Using ffmpeg binary: ${ffmpegPath}`);
 
-// Spawned directly here (unlike src/lib/streams.js, which goes through
-// prism-media's FFmpeg class and gets "pipe:1" appended for it automatically)
-// so the output target has to be added explicitly. Uses "debug" logging
-// (production uses "warning") since a crash this early can happen before
-// anything at warning severity gets logged - a noisier level is sometimes
-// the only way to see what ffmpeg was doing right before it died.
-const args = [...buildFfmpegArgs(url, { logLevel: 'debug' }), 'pipe:1'];
-console.log(`Command: ${ffmpegPath} ${args.join(' ')}`);
-const child = spawn(ffmpegPath, args);
-
-let bytesReceived = 0;
-let settled = false;
-
-const timer = setTimeout(() => {
-  finish(bytesReceived > 0);
-}, TIMEOUT_MS);
-
-child.stdout.on('data', (chunk) => {
-  bytesReceived += chunk.length;
-  if (bytesReceived >= 65536 && !settled) {
-    // Got a healthy chunk of PCM well before the timeout - no need to wait longer.
-    finish(true);
+  // Mirrors src/lib/streams.js's real behavior exactly (including the
+  // hostname -> IP + Host header rewrite that works around fully-static
+  // ffmpeg builds segfaulting on DNS lookups) so this is a true test of
+  // what the bot will actually do, not just raw ffmpeg.
+  const { url, headers } = await resolveForFfmpeg(inputUrl);
+  if (headers) {
+    console.log(`Pre-resolved to: ${url} (${headers.trim()})`);
   }
-});
 
-child.stderr.on('data', (chunk) => {
-  const line = chunk.toString().trim();
-  if (line) {
-    console.warn(`[ffmpeg] ${line}`);
-  }
-});
+  // Spawned directly here (unlike src/lib/streams.js, which goes through
+  // prism-media's FFmpeg class and gets "pipe:1" appended for it automatically)
+  // so the output target has to be added explicitly. Uses "debug" logging
+  // (production uses "warning") since a crash this early can happen before
+  // anything at warning severity gets logged - a noisier level is sometimes
+  // the only way to see what ffmpeg was doing right before it died.
+  const args = [...buildFfmpegArgs(url, { logLevel: 'debug', headers }), 'pipe:1'];
+  console.log(`Command: ${ffmpegPath} ${args.join(' ')}`);
+  const child = spawn(ffmpegPath, args);
 
-child.on('error', (err) => {
-  console.error('Failed to spawn ffmpeg:', err.message);
-  finish(false);
-});
+  let bytesReceived = 0;
+  let settled = false;
 
-child.on('exit', (code, signal) => {
-  if (!settled && bytesReceived === 0) {
-    if (signal) {
-      console.error(`ffmpeg was killed by signal ${signal} before producing any audio (this means the ffmpeg process itself crashed/was killed, not a stream error).`);
-    } else {
-      console.error(`ffmpeg exited (code ${code}) before producing any audio.`);
+  const timer = setTimeout(() => {
+    finish(bytesReceived > 0);
+  }, TIMEOUT_MS);
+
+  child.stdout.on('data', (chunk) => {
+    bytesReceived += chunk.length;
+    if (bytesReceived >= 65536 && !settled) {
+      // Got a healthy chunk of PCM well before the timeout - no need to wait longer.
+      finish(true);
     }
+  });
+
+  child.stderr.on('data', (chunk) => {
+    const line = chunk.toString().trim();
+    if (line) {
+      console.warn(`[ffmpeg] ${line}`);
+    }
+  });
+
+  child.on('error', (err) => {
+    console.error('Failed to spawn ffmpeg:', err.message);
     finish(false);
-  }
-});
+  });
 
-function finish(success) {
-  if (settled) return;
-  settled = true;
-  clearTimeout(timer);
-  if (!child.killed) {
-    child.kill('SIGKILL');
-  }
+  child.on('exit', (code, signal) => {
+    if (!settled && bytesReceived === 0) {
+      if (signal) {
+        console.error(`ffmpeg was killed by signal ${signal} before producing any audio (this means the ffmpeg process itself crashed/was killed, not a stream error).`);
+      } else {
+        console.error(`ffmpeg exited (code ${code}) before producing any audio.`);
+      }
+      finish(false);
+    }
+  });
 
-  if (success) {
-    console.log(`OK: received ${bytesReceived} bytes of PCM from the stream.`);
-    process.exit(0);
-  } else {
-    console.error(`FAILED: no audio received from the stream within ${TIMEOUT_MS}ms.`);
-    process.exit(1);
+  function finish(success) {
+    if (settled) return;
+    settled = true;
+    clearTimeout(timer);
+    if (!child.killed) {
+      child.kill('SIGKILL');
+    }
+
+    if (success) {
+      console.log(`OK: received ${bytesReceived} bytes of PCM from the stream.`);
+      process.exit(0);
+    } else {
+      console.error(`FAILED: no audio received from the stream within ${TIMEOUT_MS}ms.`);
+      process.exit(1);
+    }
   }
-}
+})();
