@@ -11,6 +11,9 @@ on a [Pterodactyl](https://pterodactyl.io/) panel.
 - `/play <url>` — play any direct audio or HLS (`.m3u8`) stream URL.
 - `/radio [station]` — play a preset station (BBC Radio 2 by default).
 - `/skip`, `/pause`, `/resume`, `/stop`, `/queue`, `/nowplaying`, `/volume`.
+- `/status` — deployed commit, uptime, memory, ffmpeg health, and recent
+  reconnect/crash events, for diagnosing issues without needing to dig
+  through raw console output.
 - Automatically reconnects a live stream if the upstream connection drops.
 - Automatically leaves the voice channel after being alone in it for
   `AUTO_DISCONNECT_MINUTES` (default 5).
@@ -153,6 +156,11 @@ from the Pterodactyl panel.
 
 ## Troubleshooting
 
+Run `/status` in Discord first — it shows the deployed commit, uptime,
+memory, whether ffmpeg is healthy, and the last few reconnect/crash events,
+which often narrows things down before you need to open the Pterodactyl
+console at all.
+
 - **ffmpeg not found / no audio at all**: run `npm run check-stream` (add
   `-- <url>` to test a different stream) — it isolates the ffmpeg/network
   path from the rest of the bot. If it fails on the Pterodactyl host but
@@ -218,5 +226,7 @@ discord-music-bot/
         ├── presets.js             # named stream presets (BBC Radio 2, etc.)
         ├── enqueue.js             # shared /play + /radio voice-join/enqueue logic
         ├── aloneWatcher.js        # alone-in-channel auto-disconnect timer
-        └── commandRegistry.js     # shared slash-command registration logic (used by index.js and deploy-commands.js)
+        ├── commandRegistry.js     # shared slash-command registration logic (used by index.js and deploy-commands.js)
+        ├── eventLog.js             # in-memory ring buffer of notable events, read by /status
+        └── version.js              # cached deployed commit hash, read by /status
 ```

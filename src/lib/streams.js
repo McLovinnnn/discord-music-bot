@@ -26,9 +26,12 @@ if (!process.env.FFMPEG_PATH) {
 // is a last-resort check: if a bad binary somehow still made it here, fail
 // loudly and clearly at startup - crashing with SIGSEGV/SIGILL a fraction of
 // a second into every playback attempt is otherwise a very confusing way to
-// find out - instead of only failing the first time someone runs /play.
+// find out - instead of only failing the first time someone runs /play. The
+// result is cached and exposed via getFfmpegHealth() for /status.
+let ffmpegHealth = { ok: false, path: process.env.FFMPEG_PATH || null, detail: 'not checked' };
 if (process.env.FFMPEG_PATH) {
   if (!fs.existsSync(process.env.FFMPEG_PATH)) {
+    ffmpegHealth.detail = 'binary not found on disk';
     console.error(
       `FFmpeg binary not found at "${process.env.FFMPEG_PATH}". ffmpeg-static's install script may have been skipped ` +
       `(check for "install scripts blocked"/"allowScripts" warnings during npm install). Try: ` +
@@ -37,13 +40,23 @@ if (process.env.FFMPEG_PATH) {
   } else {
     const check = spawnSync(process.env.FFMPEG_PATH, ['-version'], { stdio: 'ignore', timeout: 10_000 });
     if (check.error || check.signal || check.status !== 0) {
+      ffmpegHealth.detail = `does not run (signal=${check.signal}, status=${check.status})`;
       console.error(
         `FFmpeg binary at "${process.env.FFMPEG_PATH}" does not run (signal=${check.signal}, status=${check.status}). ` +
         `This usually means a corrupted/incomplete download or a wrong-architecture binary for this host. Try: ` +
         `node scripts/ensure-ffmpeg.js`
       );
+    } else {
+      ffmpegHealth = { ok: true, path: process.env.FFMPEG_PATH, detail: null };
     }
   }
+} else {
+  ffmpegHealth.detail = 'FFMPEG_PATH not set and ffmpeg-static not resolvable';
+}
+
+/** @returns {{ok: boolean, path: string|null, detail: string|null}} the startup ffmpeg binary check result. */
+function getFfmpegHealth() {
+  return ffmpegHealth;
 }
 
 /**
@@ -158,9 +171,15 @@ function buildFfmpegArgs(url, { logLevel = 'warning', headers } = {}) {
  * @param {{url: string, title: string}} track
  * @param {object} [options]
  * @param {number} [options.volume] - initial volume, 0-2 (1 = 100%).
+ * @param {(message: string) => void} [options.onEvent] - called for notable,
+ *   non-routine events (an unexpected exit, a suspected OOM kill) so callers
+ *   can surface them somewhere more durable than the console (see
+ *   src/lib/player.js, which routes this into src/lib/eventLog.js). Kept
+ *   generic/optional here - this module doesn't know about guilds or the
+ *   event log, callers decide what to do with it.
  * @returns {Promise<{resource: import('@discordjs/voice').AudioResource, ffmpegProcess: import('child_process').ChildProcess, destroy: () => void}>}
  */
-async function createResource(track, { volume = 1 } = {}) {
+async function createResource(track, { volume = 1, onEvent } = {}) {
   const { url, headers } = await resolveForFfmpeg(track.url);
   const ffmpeg = new prism.FFmpeg({ args: buildFfmpegArgs(url, { headers }) });
   const ffmpegProcess = ffmpeg.process;
@@ -191,6 +210,9 @@ async function createResource(track, { volume = 1 } = {}) {
       console.warn(`[ffmpeg:${track.title}] process exited after ${aliveMs}ms (code=${code}, signal=${signal})`);
       if (signal === 'SIGKILL' && aliveMs < 5000) {
         console.warn(`[ffmpeg:${track.title}] this looks like an OOM kill (killed almost immediately, no prior output) - check the server's memory limit in Pterodactyl.`);
+        onEvent?.(`ffmpeg for **${track.title}** was killed almost instantly (signal=SIGKILL) - looks like an OOM kill.`);
+      } else if (signal || (code !== 0 && code !== null)) {
+        onEvent?.(`ffmpeg for **${track.title}** exited unexpectedly after ${aliveMs}ms (code=${code}, signal=${signal}).`);
       }
     });
   }
@@ -218,4 +240,4 @@ async function createResource(track, { volume = 1 } = {}) {
   return { resource, ffmpegProcess, destroy };
 }
 
-module.exports = { createResource, buildFfmpegArgs, resolveForFfmpeg };
+module.exports = { createResource, buildFfmpegArgs, resolveForFfmpeg, getFfmpegHealth };

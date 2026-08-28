@@ -10,6 +10,7 @@ const {
 } = require('@discordjs/voice');
 
 const { createResource } = require('./streams');
+const eventLog = require('./eventLog');
 
 // Capped exponential backoff for re-attaching to a live stream after ffmpeg
 // dies unexpectedly (e.g. the upstream Akamai connection dropped).
@@ -45,6 +46,9 @@ class GuildQueue {
     this.destroyed = false;
     this.intentionalStop = false;
     this.liveReconnectAttempt = 0;
+    // Lifetime count of reconnect *sequences* triggered (not individual
+    // retries within one), surfaced by /status.
+    this.reconnectCount = 0;
     // Set/cleared by index.js's VoiceStateUpdate listener (alone-in-channel auto-disconnect).
     this.aloneTimer = null;
 
@@ -91,6 +95,7 @@ class GuildQueue {
         ]);
         // Recovering by itself - nothing further to do.
       } catch {
+        eventLog.log(this.guildId, 'Voice connection lost (not recovering) - leaving the channel.');
         this.destroy();
       }
     });
@@ -144,7 +149,9 @@ class GuildQueue {
     this._cleanupCurrentStream();
 
     if (this.liveReconnectAttempt >= RECONNECT_DELAYS_MS.length) {
-      this.notify(`Lost connection to **${track.title}** and gave up after ${RECONNECT_DELAYS_MS.length} reconnect attempts.`);
+      const msg = `Lost connection to **${track.title}** and gave up after ${RECONNECT_DELAYS_MS.length} reconnect attempts.`;
+      this.notify(msg);
+      eventLog.log(this.guildId, msg);
       this.liveReconnectAttempt = 0;
       this.currentTrack = null;
       await this.playNext();
@@ -152,7 +159,10 @@ class GuildQueue {
     }
 
     if (this.liveReconnectAttempt === 0) {
-      this.notify(`Lost connection to **${track.title}** - attempting to reconnect...`);
+      this.reconnectCount += 1;
+      const msg = `Lost connection to **${track.title}** - attempting to reconnect...`;
+      this.notify(msg);
+      eventLog.log(this.guildId, msg);
     }
 
     const delay = RECONNECT_DELAYS_MS[this.liveReconnectAttempt];
@@ -200,7 +210,10 @@ class GuildQueue {
 
   async _playResource(track) {
     this._cleanupCurrentStream();
-    const stream = await createResource(track, { volume: this.volume });
+    const stream = await createResource(track, {
+      volume: this.volume,
+      onEvent: (message) => eventLog.log(this.guildId, message),
+    });
     // Something else (skip/stop/destroy) may have happened while we were
     // awaiting DNS resolution/ffmpeg spawn above - don't let a stale resource
     // clobber whatever's now current.
