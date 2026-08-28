@@ -29,8 +29,13 @@ console.log(`Using ffmpeg binary: ${ffmpegPath}`);
 
 // Spawned directly here (unlike src/lib/streams.js, which goes through
 // prism-media's FFmpeg class and gets "pipe:1" appended for it automatically)
-// so the output target has to be added explicitly.
-const child = spawn(ffmpegPath, [...buildFfmpegArgs(url), 'pipe:1']);
+// so the output target has to be added explicitly. Uses "debug" logging
+// (production uses "warning") since a crash this early can happen before
+// anything at warning severity gets logged - a noisier level is sometimes
+// the only way to see what ffmpeg was doing right before it died.
+const args = [...buildFfmpegArgs(url, { logLevel: 'debug' }), 'pipe:1'];
+console.log(`Command: ${ffmpegPath} ${args.join(' ')}`);
+const child = spawn(ffmpegPath, args);
 
 let bytesReceived = 0;
 let settled = false;
@@ -59,9 +64,13 @@ child.on('error', (err) => {
   finish(false);
 });
 
-child.on('exit', (code) => {
+child.on('exit', (code, signal) => {
   if (!settled && bytesReceived === 0) {
-    console.error(`ffmpeg exited (code ${code}) before producing any audio.`);
+    if (signal) {
+      console.error(`ffmpeg was killed by signal ${signal} before producing any audio (this means the ffmpeg process itself crashed/was killed, not a stream error).`);
+    } else {
+      console.error(`ffmpeg exited (code ${code}) before producing any audio.`);
+    }
     finish(false);
   }
 });

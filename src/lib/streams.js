@@ -71,16 +71,22 @@ if (process.env.FFMPEG_PATH) {
  * see the git history for that exact bug.
  *
  * @param {string} url
+ * @param {object} [options]
+ * @param {string} [options.logLevel] - defaults to "warning" (production).
+ *   scripts/check-stream.js can pass "debug" for troubleshooting - a crash
+ *   this early is often gone before anything at "warning" severity gets
+ *   logged, so a noisier level is sometimes the only way to see what ffmpeg
+ *   was doing (e.g. "Opening ... for reading") right before it died.
  * @returns {string[]}
  */
-function buildFfmpegArgs(url) {
+function buildFfmpegArgs(url, { logLevel = 'warning' } = {}) {
   return [
     '-reconnect', '1',
     '-reconnect_streamed', '1',
     '-reconnect_delay_max', '5',
     '-i', url,
     '-analyzeduration', '0',
-    '-loglevel', 'warning',
+    '-loglevel', logLevel,
     '-f', 's16le',
     '-ar', '48000',
     '-ac', '2',
