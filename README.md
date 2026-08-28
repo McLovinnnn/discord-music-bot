@@ -51,11 +51,26 @@ Then, in your test guild: join a voice channel and run `/radio`.
 
 ## 3. Deploying to Pterodactyl
 
+### Quick start: import the ready-made egg
+
+[`pterodactyl/egg-discord-music-bot.json`](pterodactyl/egg-discord-music-bot.json) is a ready-to-import Pterodactyl egg for this bot. In the admin panel: **Nests → Import Egg**, upload that file. It's pre-configured with:
+
+- Docker images: `ghcr.io/pelican-eggs/yolks:nodejs_22` and `nodejs_24` (both satisfy the Node ≥22.12 requirement — **the older/more commonly-linked `ghcr.io/pterodactyl/yolks` images only go up to Node 20 and will not work** for this bot).
+- An install script that clones (or resets, on reinstall) the GitHub repo into `/mnt/server`.
+- Startup command `npm install && node boot.js`, a "ready" detection string, and `^C` (SIGINT) as the graceful stop signal, which `src/index.js` already handles.
+- All the config variables below, pre-declared with descriptions and defaults, ready to fill in per-server.
+
+After importing, create a new server using this egg, fill in `Discord Bot Token` / `Discord Application (Client) ID` / `Guild ID` in the server's Startup tab, and install. Then see [Registering commands](#registering-commands) below.
+
+If you'd rather configure a generic Node.js egg by hand instead, the manual details are below.
+
 ### Egg / Docker image
 
-Use a generic Node.js egg (e.g. the community "Generic Node.js" egg) running
-a **Node ≥ 22** image tag. Lower tags some eggs default to (18/20) are **not**
-sufficient — `@discordjs/voice` requires Node 22.12.0+.
+Use a generic Node.js egg running a **Node ≥ 22.12** image tag —
+`@discordjs/voice` hard-requires it. Concretely: `ghcr.io/pelican-eggs/yolks:nodejs_22`
+or `nodejs_24` (these are what the ready-made egg above uses). Watch out for
+the older, more commonly-linked `ghcr.io/pterodactyl/yolks` image set — as of
+writing it only publishes up through `nodejs_20`, which is **not** new enough.
 
 ffmpeg does not need to be installed separately: the `ffmpeg-static` npm
 dependency bundles a working ffmpeg binary, pulled in automatically by

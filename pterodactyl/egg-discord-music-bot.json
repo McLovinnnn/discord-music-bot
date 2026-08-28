@@ -1,0 +1,113 @@
+{
+    "_comment": "DO NOT EDIT: FILE GENERATED AUTOMATICALLY BY PTERODACTYL PANEL - PTDL_v2",
+    "meta": {
+        "version": "PTDL_v2",
+        "update_url": null
+    },
+    "exported_at": "2026-08-28T00:00:00+00:00",
+    "name": "Discord Music Bot (discord-music-bot)",
+    "author": "mclovinnnn0@gmail.com",
+    "description": "Slash-command Discord music bot with a queue, live HLS radio support (BBC Radio 2), live-stream reconnect, alone-in-channel auto-disconnect, and boot-time GitHub auto-update. Repo: https://github.com/McLovinnnn/discord-music-bot",
+    "features": null,
+    "docker_images": {
+        "Node.js 22 (recommended)": "ghcr.io/pelican-eggs/yolks:nodejs_22",
+        "Node.js 24": "ghcr.io/pelican-eggs/yolks:nodejs_24"
+    },
+    "file_denylist": [],
+    "startup": "npm install && node boot.js",
+    "config": {
+        "files": "{}",
+        "startup": "{\r\n    \"done\": \"Ready as\"\r\n}",
+        "logs": "{}",
+        "stop": "^C"
+    },
+    "scripts": {
+        "installation": {
+            "script": "#!/bin/bash\n# Discord Music Bot - Pterodactyl install script.\n# Runs once (and on manual \"Reinstall Server\") inside the installer container.\n# Clones/updates the repo into /mnt/server. Dependencies are installed on\n# first *startup* instead (the egg's startup command is \"npm install && node\n# boot.js\"), since this installer container doesn't necessarily have Node.\n\nset -e\n\napt-get update -y >/dev/null 2>&1 || true\napt-get install -y git ca-certificates >/dev/null 2>&1 || true\n\ncd /mnt/server\n\nGIT_ADDRESS=\"${GIT_ADDRESS:-https://github.com/McLovinnnn/discord-music-bot.git}\"\nBRANCH=\"${UPDATE_BRANCH:-main}\"\n\nif [ -d .git ]; then\n  echo \"Existing git checkout found - resetting to origin/${BRANCH}...\"\n  git remote set-url origin \"${GIT_ADDRESS}\"\n  git fetch origin \"${BRANCH}\"\n  git checkout \"${BRANCH}\"\n  git reset --hard \"origin/${BRANCH}\"\nelse\n  echo \"Cloning ${GIT_ADDRESS} (branch: ${BRANCH})...\"\n  rm -rf /tmp/clone-target\n  git clone --branch \"${BRANCH}\" \"${GIT_ADDRESS}\" /tmp/clone-target\n  cp -a /tmp/clone-target/. /mnt/server/\n  rm -rf /tmp/clone-target\nfi\n\necho \"Install complete. Dependencies install automatically on first startup.\"\n",
+            "container": "ghcr.io/pelican-eggs/installers:debian",
+            "entrypoint": "bash"
+        }
+    },
+    "variables": [
+        {
+            "name": "Discord Bot Token",
+            "description": "Bot token from the Discord Developer Portal, Bot tab.",
+            "env_variable": "DISCORD_TOKEN",
+            "default_value": "",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "required|string",
+            "field_type": "text"
+        },
+        {
+            "name": "Discord Application (Client) ID",
+            "description": "Application ID from the Discord Developer Portal, General Information tab.",
+            "env_variable": "CLIENT_ID",
+            "default_value": "",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "required|string",
+            "field_type": "text"
+        },
+        {
+            "name": "Guild ID",
+            "description": "Optional: a guild (server) ID for instant, guild-scoped slash command registration. Leave blank to register commands globally instead (up to ~1hr to propagate).",
+            "env_variable": "GUILD_ID",
+            "default_value": "",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "nullable|string",
+            "field_type": "text"
+        },
+        {
+            "name": "Default Volume",
+            "description": "Default playback volume percentage (0-200) applied to freshly created queues.",
+            "env_variable": "DEFAULT_VOLUME",
+            "default_value": "100",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "required|integer|between:0,200",
+            "field_type": "text"
+        },
+        {
+            "name": "Auto-Disconnect Minutes",
+            "description": "Minutes to stay in a voice channel after every human member has left before automatically disconnecting.",
+            "env_variable": "AUTO_DISCONNECT_MINUTES",
+            "default_value": "5",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "required|integer|min:1",
+            "field_type": "text"
+        },
+        {
+            "name": "Auto Update",
+            "description": "Check GitHub for a newer commit and pull it in on every boot, before starting the bot. Set to false to disable.",
+            "env_variable": "AUTO_UPDATE",
+            "default_value": "true",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "required|string|in:true,false",
+            "field_type": "text"
+        },
+        {
+            "name": "Update Branch",
+            "description": "Git branch to track for the boot-time auto-update check (and for install/reinstall).",
+            "env_variable": "UPDATE_BRANCH",
+            "default_value": "main",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "required|string",
+            "field_type": "text"
+        },
+        {
+            "name": "Git Repository",
+            "description": "Repository cloned during install/reinstall.",
+            "env_variable": "GIT_ADDRESS",
+            "default_value": "https://github.com/McLovinnnn/discord-music-bot.git",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "required|string",
+            "field_type": "text"
+        }
+    ]
+}
