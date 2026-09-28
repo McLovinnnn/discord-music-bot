@@ -251,6 +251,24 @@ console at all.
   check) often fixes this on its own if a newer release has since shipped.
   If it's still broken, `/status`'s recent-events list and the console's
   `youtubeResolver:`-prefixed warnings are the first things to check.
+- **Console shows `ERROR: [youtube] ...: Sign in to confirm you're not a
+  bot`**: this is YouTube's anti-bot check, which is markedly stricter for
+  datacenter/hosting-provider IPs (exactly what a Pterodactyl host runs on)
+  than for a home connection — confirmed happening in practice during this
+  project's own development. `youtubeResolver.js` already retries once with
+  a different client identity (`YTDLP_EXTRACTOR_ARGS`, default
+  `youtube:player_client=android`) specifically to work around this, so a
+  single occurrence in the console (a "default client failed, retrying..."
+  warning) followed by success is expected and not a problem. If it's
+  failing even after that retry, the fallback client itself may need
+  changing — this is an active, shifting area (YouTube's checks change every
+  few weeks, yt-dlp ships counter-fixes to match), so check
+  [yt-dlp's wiki](https://github.com/yt-dlp/yt-dlp/wiki) for the current
+  best client before trying values by hand. There's no flag that fixes this
+  with certainty on a datacenter IP — the only fully reliable fix is
+  `--cookies` from a real logged-in browser session, which this project
+  deliberately doesn't automate (it's a manual, periodically-refreshed step
+  outside this bot's scope).
 - **`/jamiematt`/Spotify links via `/play` say they can't reach Spotify**:
   double check `SPOTIFY_CLIENT_ID`/`SPOTIFY_CLIENT_SECRET` are set correctly
   from your Spotify Developer Dashboard app — no other Spotify-side setup

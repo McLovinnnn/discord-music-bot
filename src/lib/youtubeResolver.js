@@ -65,10 +65,40 @@ function decodeYtdlpOutput(buffer) {
   }
 }
 
-async function runYtdlp(args) {
+// YouTube's anti-bot checks are markedly stricter for datacenter/hosting-
+// provider IPs (exactly what a Pterodactyl host runs on) than for a home
+// connection - "Sign in to confirm you're not a bot" can show up even for
+// ordinary public videos. Forcing a specific client via --extractor-args is
+// the standard workaround, but which client actually works turns out to be
+// environment-dependent in a way that isn't safe to hardcode: testing
+// several candidates (tv, web_safari, android, ios) against a real,
+// *unflagged* connection found every forced client except "android" failed
+// outright on format availability (a different failure mode from the bot
+// check this is meant to fix), and "android" only worked when combined with
+// a more tolerant "bestaudio/best" format selector (see resolveStreamUrl).
+//
+// So rather than gambling on one hardcoded client working everywhere, this
+// tries the default (unforced) client first - which is what actually works
+// on an unflagged connection - and only falls back to forcing a client if
+// that specific attempt fails. Configurable so the fallback client can be
+// tuned without a code change if this stops working (YouTube's checks shift
+// every few weeks and yt-dlp ships counter-fixes to match - see
+// https://github.com/yt-dlp/yt-dlp/wiki).
+const FALLBACK_EXTRACTOR_ARGS = process.env.YTDLP_EXTRACTOR_ARGS || 'youtube:player_client=android';
+
+async function execYtdlp(args) {
   const env = { ...process.env, PYTHONIOENCODING: 'utf-8' };
   const { stdout } = await execFileAsync(getBinaryPath(), args, { timeout: TIMEOUT_MS, maxBuffer: MAX_BUFFER, env, encoding: 'buffer' });
   return decodeYtdlpOutput(stdout).trim();
+}
+
+async function runYtdlp(args) {
+  try {
+    return await execYtdlp(args);
+  } catch (err) {
+    console.warn(`youtubeResolver: default client failed (${err.message.split('\n')[0]}), retrying with ${FALLBACK_EXTRACTOR_ARGS}...`);
+    return execYtdlp(['--extractor-args', FALLBACK_EXTRACTOR_ARGS, ...args]);
+  }
 }
 
 /** yt-dlp expects a URL, not a bare video ID. */
@@ -123,7 +153,11 @@ async function getTitle(videoId) {
  * @throws if no playable audio URL could be resolved.
  */
 async function resolveStreamUrl(videoId) {
-  const url = await runYtdlp(['-f', 'bestaudio', '--get-url', '--no-warnings', watchUrl(videoId)]);
+  // "bestaudio/best" (a fallback chain), not a bare "bestaudio" - some
+  // clients' format lists (particularly the "android" fallback client used
+  // when the default is blocked, see runYtdlp above) don't include a clean
+  // audio-only entry, which "bestaudio" alone fails on outright.
+  const url = await runYtdlp(['-f', 'bestaudio/best', '--get-url', '--no-warnings', watchUrl(videoId)]);
   if (!url || !url.startsWith('http')) {
     throw new Error(`yt-dlp returned no playable URL for video ${videoId}`);
   }
