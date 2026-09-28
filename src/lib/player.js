@@ -16,6 +16,12 @@ const eventLog = require('./eventLog');
 // dies unexpectedly (e.g. the upstream Akamai connection dropped).
 const RECONNECT_DELAYS_MS = [1000, 2000, 4000, 8000, 16000];
 
+// Smaller retry budget for a finite track whose ffmpeg process crashes
+// (as opposed to a live stream dropping, which gets the fuller backoff
+// above) - a couple of quick attempts before giving up and moving on,
+// rather than holding up the rest of the queue.
+const FINITE_RETRY_DELAYS_MS = [1000, 3000];
+
 /**
  * One GuildQueue per guild: owns the voice connection, the audio player, and
  * the track queue for that guild. See src/lib/queueManager.js for the
@@ -49,6 +55,10 @@ class GuildQueue {
     // Lifetime count of reconnect *sequences* triggered (not individual
     // retries within one), surfaced by /status.
     this.reconnectCount = 0;
+    // Retry budget for the *current* finite track after an abnormal ffmpeg
+    // exit (see _playResource/_handleIdle) - reset whenever a new track starts.
+    this.finiteRetryAttempt = 0;
+    this._currentStreamAbnormalExit = false;
     // Set/cleared by index.js's VoiceStateUpdate listener (alone-in-channel auto-disconnect).
     this.aloneTimer = null;
 
@@ -136,12 +146,52 @@ class GuildQueue {
       return;
     }
 
-    // A finite track reached EOF naturally (or we're intentionally paused and
-    // don't want a reconnect attempt to fire).
-    if (!this.paused) {
-      this._cleanupCurrentStream();
-      await this.playNext();
+    if (this.paused) return;
+
+    if (this.currentTrack && this._currentStreamAbnormalExit && this.finiteRetryAttempt < FINITE_RETRY_DELAYS_MS.length) {
+      // ffmpeg crashed/errored rather than reaching a normal EOF - retry the
+      // same track a couple of times before treating it as "ended, advance
+      // queue". Without this, a crash (e.g. a YouTube-sourced track hitting
+      // the same class of issue the BBC HTTP stream did) would silently look
+      // identical to the track just finishing.
+      await this._retryFiniteTrack();
+      return;
     }
+
+    if (this.currentTrack && this._currentStreamAbnormalExit) {
+      // Retry budget exhausted - unlike a natural EOF, this is worth telling
+      // the user about before moving on.
+      const msg = `Gave up on **${this.currentTrack.title}** after ${FINITE_RETRY_DELAYS_MS.length} failed attempts - skipping.`;
+      this.notify(msg);
+      eventLog.log(this.guildId, msg);
+    }
+
+    // A finite track reached EOF naturally (or its retry budget ran out).
+    this._cleanupCurrentStream();
+    await this.playNext();
+  }
+
+  async _retryFiniteTrack() {
+    const track = this.currentTrack;
+    this._cleanupCurrentStream();
+
+    const delay = FINITE_RETRY_DELAYS_MS[this.finiteRetryAttempt];
+    this.finiteRetryAttempt += 1;
+    const attempt = this.finiteRetryAttempt;
+    const attemptsTotal = FINITE_RETRY_DELAYS_MS.length;
+    eventLog.log(this.guildId, `**${track.title}** stopped unexpectedly - retrying (attempt ${attempt}/${attemptsTotal})...`);
+
+    setTimeout(async () => {
+      if (this.destroyed || this.currentTrack !== track) return;
+      try {
+        await this._playResource(track);
+      } catch (err) {
+        console.error(`[GuildQueue:${this.guildId}] finite-track retry failed:`, err.message);
+        this._handleIdle().catch((idleErr) => {
+          console.error(`[GuildQueue:${this.guildId}] error handling failed finite retry:`, idleErr);
+        });
+      }
+    }, delay);
   }
 
   async _reconnectLiveTrack() {
@@ -204,15 +254,20 @@ class GuildQueue {
     }
 
     this.liveReconnectAttempt = 0;
+    this.finiteRetryAttempt = 0;
     this.currentTrack = next;
     await this._playResource(next);
   }
 
   async _playResource(track) {
     this._cleanupCurrentStream();
+    this._currentStreamAbnormalExit = false;
     const stream = await createResource(track, {
       volume: this.volume,
-      onEvent: (message) => eventLog.log(this.guildId, message),
+      onEvent: (message) => {
+        this._currentStreamAbnormalExit = true;
+        eventLog.log(this.guildId, message);
+      },
     });
     // Something else (skip/stop/destroy) may have happened while we were
     // awaiting DNS resolution/ffmpeg spawn above - don't let a stale resource

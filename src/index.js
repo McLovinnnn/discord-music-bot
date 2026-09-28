@@ -9,6 +9,7 @@ const { Client, Collection, GatewayIntentBits, Events } = require('discord.js');
 const queueManager = require('./lib/queueManager');
 const { checkAlone } = require('./lib/aloneWatcher');
 const { registerCommands } = require('./lib/commandRegistry');
+const dailyPlaylist = require('./lib/dailyPlaylist');
 
 const REGISTER_ON_BOOT = (process.env.REGISTER_COMMANDS_ON_BOOT ?? 'true').toLowerCase() !== 'false';
 
@@ -43,6 +44,8 @@ for (const file of fs.readdirSync(commandsDir).filter((f) => f.endsWith('.js')))
 client.once(Events.ClientReady, (readyClient) => {
   console.log(`Ready as ${readyClient.user.tag} (${client.commands.size} commands loaded).`);
 });
+
+dailyPlaylist.startPeriodicRefresh();
 
 client.on(Events.InteractionCreate, async (interaction) => {
   if (!interaction.isChatInputCommand()) return;

@@ -1,20 +1,34 @@
 # discord-music-bot
 
 A Discord slash-command music bot with a queue, built to reliably stream live
-HLS radio (BBC Radio 2 by default) as well as any direct audio/stream URL,
-with live-stream-aware reconnect, pause/resume, an alone-in-channel
-auto-disconnect, and a boot-time GitHub auto-updater — designed to be deployed
-on a [Pterodactyl](https://pterodactyl.io/) panel.
+HLS radio (BBC Radio 2 by default), direct audio/stream URLs, and
+Spotify/YouTube links, with live-stream-aware reconnect, pause/resume, an
+alone-in-channel auto-disconnect, and a boot-time GitHub auto-updater —
+designed to be deployed on a [Pterodactyl](https://pterodactyl.io/) panel.
+
+**Note on Spotify/YouTube playback**: Spotify never exposes playable track
+audio to third parties (it's DRM-protected) — only metadata (title/artist)
+and an unreliable, increasingly-absent 30-second preview clip. So, like every
+other bot that claims "Spotify support," this one uses Spotify's API purely
+for the tracklist and resolves actual audio from YouTube via `yt-dlp`. See
+[Spotify + YouTube setup](#3-spotify--youtube-setup) for the trade-offs
+involved (a real, if unlikely, ToS consideration, and a dependency that can
+occasionally need updating as YouTube changes things).
 
 ## Features
 
-- `/play <url>` — play any direct audio or HLS (`.m3u8`) stream URL.
+- `/play <url>` — play a direct audio/HLS (`.m3u8`) stream URL, a Spotify
+  track/playlist link, or a YouTube link.
 - `/radio [station]` — play a preset station (BBC Radio 2 by default).
+- `/jamiematt` — play today's tracks from a configured daily-rotating
+  Spotify playlist (see [Spotify + YouTube setup](#3-spotify--youtube-setup)).
 - `/skip`, `/pause`, `/resume`, `/stop`, `/queue`, `/nowplaying`, `/volume`.
 - `/status` — deployed commit, uptime, memory, ffmpeg health, and recent
   reconnect/crash events, for diagnosing issues without needing to dig
   through raw console output.
-- Automatically reconnects a live stream if the upstream connection drops.
+- Automatically reconnects a live stream if the upstream connection drops,
+  and retries a finite track (direct URL/YouTube) a couple of times if its
+  process crashes instead of silently treating that like the track ending.
 - Automatically leaves the voice channel after being alone in it for
   `AUTO_DISCONNECT_MINUTES` (default 5).
 - Automatically (re-)registers its slash commands with Discord on every
@@ -53,7 +67,18 @@ npm start                   # also registers slash commands automatically
 
 Then, in your test guild: join a voice channel and run `/radio`.
 
-## 3. Deploying to Pterodactyl
+## 3. Spotify + YouTube setup
+
+Optional — `/radio` and direct-URL `/play` work without this. Needed for
+`/jamiematt` and Spotify/YouTube links via `/play`.
+
+1. Create an app at the [Spotify Developer Dashboard](https://developer.spotify.com/dashboard) → copy its **Client ID** and **Client Secret** as `SPOTIFY_CLIENT_ID`/`SPOTIFY_CLIENT_SECRET`. This uses the Client Credentials flow (no user login, no redirect URI needed) — it only ever reads public playlist/track metadata.
+2. `SPOTIFY_PLAYLIST_URL` — the playlist `/jamiematt` plays, refreshed on every boot plus every `PLAYLIST_REFRESH_HOURS` (default 12). Defaults to a daily-rotating Spotify editorial playlist; swap in any playlist link.
+3. YouTube audio resolution needs the `yt-dlp` binary, handled the same way as ffmpeg: `scripts/ensure-ytdlp.js` downloads and self-heals it automatically as part of `npm install`, no separate setup needed. Three other approaches were tried and abandoned during development — see [Troubleshooting](#troubleshooting) if YouTube playback stops working, since it's worth understanding why this specific approach was chosen.
+
+**Worth understanding**: Spotify's API never exposes playable track audio to any third party — only metadata and an unreliable preview clip. Every bot that claims "Spotify support," this one included, actually resolves real audio from YouTube behind the scenes. YouTube has no official audio API either, so this uses `yt-dlp` (the same tool nearly the entire self-hosted-media ecosystem relies on) rather than a lighter JS library — three JS extractor libraries (`youtubei.js`, `@distube/ytdl-core`, `play-dl`) were tried first and all hit YouTube's current anti-bot PoToken requirement; `yt-dlp`'s own actively-maintained client-selection logic resolves working audio URLs without it. This is a genuine, if small, ToS consideration (the same category that got the bots Groovy/Rythm shut down by YouTube in 2021, though enforcement against a small personal bot is very unlikely) and `yt-dlp` is a moving target that occasionally needs a newer release to keep working as YouTube changes things — `ensure-ytdlp.js` always fetches latest on install for exactly that reason.
+
+## 4. Deploying to Pterodactyl
 
 ### Quick start: import the ready-made egg
 
@@ -83,6 +108,15 @@ your host's CPU architecture doesn't have a published `ffmpeg-static`
 release — rare, mostly certain ARM hosts — you'd need to `apt-get install
 ffmpeg` via the egg's install script instead.)
 
+Same story for `yt-dlp` (used for YouTube-sourced audio, see
+[Spotify + YouTube setup](#3-spotify--youtube-setup)): no separate install —
+`scripts/ensure-ytdlp.js` downloads its standalone binary during
+`npm install`. It's fetched for `linux`/`x64` or `linux`/`arm64` (both
+confirmed glibc, not musl, for the recommended `pelican-eggs/yolks` images);
+if your host is musl-based (e.g. an Alpine-based image) this won't resolve a
+working binary and YouTube-sourced playback won't work until that's
+addressed.
+
 ### Deploy via git clone (required for auto-update)
 
 Deploy the code with the egg's **git repository** install option (pointed at
@@ -106,6 +140,9 @@ never commit a `.env` file:
 | `AUTO_UPDATE` | no | Default `true`. Set `false` to disable the boot-time GitHub check. |
 | `UPDATE_BRANCH` | no | Default `main`. |
 | `REGISTER_COMMANDS_ON_BOOT` | no | Default `true`. Set `false` to disable automatic slash command registration on boot. |
+| `SPOTIFY_CLIENT_ID` / `SPOTIFY_CLIENT_SECRET` | for `/jamiematt`/Spotify links | From a [Spotify Developer Dashboard](https://developer.spotify.com/dashboard) app. |
+| `SPOTIFY_PLAYLIST_URL` | for `/jamiematt` | The playlist `/jamiematt` plays. |
+| `PLAYLIST_REFRESH_HOURS` | no | Default `12`. |
 
 ### Startup command
 
@@ -207,24 +244,51 @@ console at all.
 - **Bot leaves the channel unexpectedly**: check `AUTO_DISCONNECT_MINUTES` —
   it leaves automatically once every human has left its channel for that
   long.
+- **YouTube-sourced playback (`/jamiematt`, Spotify/YouTube links via
+  `/play`) fails or was working and stopped**: most likely `yt-dlp` itself
+  needs an update to keep up with a YouTube change — it's fetched fresh on
+  every `npm install`, so a plain restart (which triggers `boot.js`'s update
+  check) often fixes this on its own if a newer release has since shipped.
+  If it's still broken, `/status`'s recent-events list and the console's
+  `youtubeResolver:`-prefixed warnings are the first things to check.
+- **`/jamiematt`/Spotify links via `/play` say they can't reach Spotify**:
+  double check `SPOTIFY_CLIENT_ID`/`SPOTIFY_CLIENT_SECRET` are set correctly
+  from your Spotify Developer Dashboard app — no other Spotify-side setup
+  (redirect URIs, user login) is needed for this bot.
+- **A crash/reconnect loop on a YouTube-sourced track specifically, not on
+  direct HTTP URLs**: the DNS-resolution SIGSEGV workaround described above
+  only covers plain `http://` URLs (YouTube's are `https://`, which can't
+  use the same IP-substitution trick without breaking TLS). If this shows up,
+  it's a real, currently-unresolved edge case — the finite-track retry logic
+  (see Features) will retry a couple of times and post in the channel if it
+  gives up, rather than failing silently, but the underlying cause isn't
+  fixed by that alone.
 
 ## Project layout
 
 ```
 discord-music-bot/
 ├── boot.js                    # entry point: GitHub update check, then starts src/index.js
-├── scripts/check-stream.js    # standalone ffmpeg smoke test
+├── bin/                        # downloaded ffmpeg/yt-dlp binaries (gitignored, see scripts/ensure-*.js)
+├── scripts/
+│   ├── check-stream.js         # standalone ffmpeg smoke test
+│   ├── ensure-ffmpeg.js         # postinstall: downloads/self-heals the ffmpeg-static binary
+│   └── ensure-ytdlp.js          # postinstall: downloads/self-heals the yt-dlp binary
 └── src/
     ├── index.js                # Discord client, command dispatch, alone-disconnect wiring
     ├── deploy-commands.js      # manual/standalone command registration (optional - see below)
-    ├── commands/                # one file per slash command
+    ├── commands/                # one file per slash command (play, radio, jamiematt, status, ...)
     └── lib/
         ├── queueManager.js      # per-guild queue registry
         ├── player.js             # GuildQueue - voice connection + playback state machine
         ├── streams.js            # ffmpeg/HLS -> AudioResource pipeline
-        ├── track.js               # track factory
+        ├── track.js               # track factory (fixed URL, or a lazy resolveUrl for YouTube)
         ├── presets.js             # named stream presets (BBC Radio 2, etc.)
-        ├── enqueue.js             # shared /play + /radio voice-join/enqueue logic
+        ├── spotify.js              # Spotify Web API: playlist/track fetch + link-type detection
+        ├── youtubeResolver.js      # shells out to yt-dlp: search, URL parsing, stream resolution
+        ├── ytdlp.js                # yt-dlp binary path/download-URL resolution
+        ├── dailyPlaylist.js        # cached + periodically-refreshed track list for /jamiematt
+        ├── enqueue.js             # shared voice-join/enqueue logic for every play-ish command
         ├── aloneWatcher.js        # alone-in-channel auto-disconnect timer
         ├── commandRegistry.js     # shared slash-command registration logic (used by index.js and deploy-commands.js)
         ├── eventLog.js             # in-memory ring buffer of notable events, read by /status

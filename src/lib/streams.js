@@ -180,7 +180,8 @@ function buildFfmpegArgs(url, { logLevel = 'warning', headers } = {}) {
  * @returns {Promise<{resource: import('@discordjs/voice').AudioResource, ffmpegProcess: import('child_process').ChildProcess, destroy: () => void}>}
  */
 async function createResource(track, { volume = 1, onEvent } = {}) {
-  const { url, headers } = await resolveForFfmpeg(track.url);
+  const rawUrl = track.resolveUrl ? await track.resolveUrl() : track.url;
+  const { url, headers } = await resolveForFfmpeg(rawUrl);
   const ffmpeg = new prism.FFmpeg({ args: buildFfmpegArgs(url, { headers }) });
   const ffmpegProcess = ffmpeg.process;
 

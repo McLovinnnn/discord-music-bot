@@ -1,0 +1,133 @@
+'use strict';
+
+const { execFile } = require('node:child_process');
+const { promisify } = require('node:util');
+const { getBinaryPath } = require('./ytdlp');
+
+const execFileAsync = promisify(execFile);
+const TIMEOUT_MS = 20_000;
+// yt-dlp can produce a lot of stdout for some queries (format lists etc.) -
+// this is generous headroom for the --print/--get-url calls actually used here.
+const MAX_BUFFER = 10 * 1024 * 1024;
+
+/**
+ * Extracts a video ID from a direct YouTube link (youtube.com/watch?v=,
+ * youtu.be/, music.youtube.com/watch?v=). Pure URL parsing, no yt-dlp call.
+ *
+ * @param {string} url
+ * @returns {string|null}
+ */
+function parseVideoId(url) {
+  let parsed;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return null;
+  }
+
+  const host = parsed.hostname.replace(/^www\./, '').replace(/^music\./, '');
+  if (host === 'youtu.be') {
+    const id = parsed.pathname.slice(1);
+    return id || null;
+  }
+  if (host === 'youtube.com') {
+    if (parsed.pathname === '/watch') {
+      return parsed.searchParams.get('v');
+    }
+    if (parsed.pathname.startsWith('/shorts/')) {
+      return parsed.pathname.split('/')[2] || null;
+    }
+  }
+  return null;
+}
+
+/**
+ * yt-dlp's bundled Python runtime doesn't reliably honor PYTHONIOENCODING
+ * when its stdout is a pipe rather than a real console - on Windows this has
+ * been observed emitting non-ASCII characters (e.g. the en-dash in "Artist -
+ * Title") as raw Windows-1252 bytes instead of UTF-8, which corrupts to the
+ * U+FFFD replacement character if decoded as UTF-8. Decoding as UTF-8 first
+ * and only falling back to Windows-1252 if that produced a replacement
+ * character (rather than assuming the platform) means this self-corrects
+ * regardless of whether the same issue does or doesn't show up on the actual
+ * Linux deployment target.
+ *
+ * @param {Buffer} buffer
+ * @returns {string}
+ */
+function decodeYtdlpOutput(buffer) {
+  const asUtf8 = buffer.toString('utf8');
+  if (!asUtf8.includes('�')) return asUtf8;
+  try {
+    return new TextDecoder('windows-1252').decode(buffer);
+  } catch {
+    return asUtf8;
+  }
+}
+
+async function runYtdlp(args) {
+  const env = { ...process.env, PYTHONIOENCODING: 'utf-8' };
+  const { stdout } = await execFileAsync(getBinaryPath(), args, { timeout: TIMEOUT_MS, maxBuffer: MAX_BUFFER, env, encoding: 'buffer' });
+  return decodeYtdlpOutput(stdout).trim();
+}
+
+/** yt-dlp expects a URL, not a bare video ID. */
+function watchUrl(videoId) {
+  return `https://www.youtube.com/watch?v=${videoId}`;
+}
+
+/**
+ * Searches YouTube for "<artists> - <title>" and returns the top result's
+ * video ID, or null if nothing came back (caller skips the track).
+ *
+ * @param {string} title
+ * @param {string[]} artists
+ * @returns {Promise<string|null>}
+ */
+async function findVideoId(title, artists) {
+  const query = `ytsearch1:${artists.join(', ')} - ${title}`;
+  try {
+    const output = await runYtdlp(['--print', '%(id)s', '--no-warnings', '--skip-download', query]);
+    return output || null;
+  } catch (err) {
+    console.warn(`youtubeResolver: search failed for "${query}": ${err.message}`);
+    return null;
+  }
+}
+
+/**
+ * Basic title lookup, used when /play is given a direct YouTube link (where
+ * there's no Spotify metadata to display instead).
+ *
+ * @param {string} videoId
+ * @returns {Promise<string>}
+ */
+async function getTitle(videoId) {
+  try {
+    return await runYtdlp(['--print', '%(title)s', '--no-warnings', '--skip-download', watchUrl(videoId)]);
+  } catch (err) {
+    console.warn(`youtubeResolver: title lookup failed for ${videoId}: ${err.message}`);
+    return videoId;
+  }
+}
+
+/**
+ * Resolves a direct, playable audio-only stream URL for a video ID.
+ * **Called fresh at play time, not cached** - like the HLS DNS-resolution
+ * workaround in streams.js, these googlevideo.com URLs are signed/
+ * time-limited, so resolving once and reusing later in the day would fail
+ * the same way a stale URL would anywhere else in this project.
+ *
+ * @param {string} videoId
+ * @returns {Promise<string>}
+ * @throws if no playable audio URL could be resolved.
+ */
+async function resolveStreamUrl(videoId) {
+  const url = await runYtdlp(['-f', 'bestaudio', '--get-url', '--no-warnings', watchUrl(videoId)]);
+  if (!url || !url.startsWith('http')) {
+    throw new Error(`yt-dlp returned no playable URL for video ${videoId}`);
+  }
+  return url;
+}
+
+module.exports = { parseVideoId, findVideoId, getTitle, resolveStreamUrl };

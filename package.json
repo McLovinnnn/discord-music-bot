@@ -11,7 +11,7 @@
     "start": "node boot.js",
     "register-commands": "node src/deploy-commands.js",
     "check-stream": "node scripts/check-stream.js",
-    "postinstall": "node scripts/ensure-ffmpeg.js || echo \"WARNING: ffmpeg-static postinstall failed - audio playback will not work until this is resolved (see README troubleshooting)\""
+    "postinstall": "node scripts/ensure-ffmpeg.js || echo \"WARNING: ffmpeg-static postinstall failed - audio playback will not work until this is resolved (see README troubleshooting)\"; node scripts/ensure-ytdlp.js || echo \"WARNING: yt-dlp postinstall failed - YouTube-sourced playback will not work until this is resolved\""
   },
   "license": "MIT",
   "dependencies": {

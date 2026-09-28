@@ -23,20 +23,35 @@ function inferIsLive(url) {
 
 /**
  * @param {object} options
- * @param {string} options.url - direct audio/HLS stream URL to play.
+ * @param {string} [options.url] - direct audio/HLS stream URL to play. Required
+ *   unless `resolveUrl` is given instead.
+ * @param {() => Promise<string>} [options.resolveUrl] - resolves the playable
+ *   URL lazily, right before playback, instead of having a fixed one up
+ *   front. Needed for sources (YouTube) whose resolved stream URLs are
+ *   signed/time-limited - resolving once and reusing it later would fail the
+ *   same way a stale HLS URL would. When set, `isLive` must be passed
+ *   explicitly too, since there's no URL string to infer it from.
  * @param {string} [options.title] - display title. Defaults to the URL itself.
  * @param {string} [options.requestedBy] - display name/tag of who queued this.
  * @param {boolean} [options.isLive] - explicit override; if omitted, inferred from the URL.
- * @returns {{url: string, title: string, requestedBy: string, isLive: boolean}}
+ * @returns {{url: string|undefined, resolveUrl: (() => Promise<string>)|undefined, title: string, requestedBy: string, isLive: boolean}}
  */
-function createTrack({ url, title, requestedBy, isLive }) {
-  if (!url || typeof url !== 'string') {
-    throw new Error('createTrack requires a string "url"');
+function createTrack({ url, resolveUrl, title, requestedBy, isLive }) {
+  if (resolveUrl) {
+    if (typeof resolveUrl !== 'function') {
+      throw new Error('createTrack: "resolveUrl" must be a function');
+    }
+    if (typeof isLive !== 'boolean') {
+      throw new Error('createTrack: "isLive" must be passed explicitly when using "resolveUrl" (there\'s no URL to infer it from)');
+    }
+  } else if (!url || typeof url !== 'string') {
+    throw new Error('createTrack requires a string "url" (or a "resolveUrl" function)');
   }
 
   return {
     url,
-    title: title || url,
+    resolveUrl,
+    title: title || url || 'Unknown track',
     requestedBy: requestedBy || 'unknown',
     isLive: typeof isLive === 'boolean' ? isLive : inferIsLive(url),
   };

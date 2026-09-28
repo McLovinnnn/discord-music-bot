@@ -108,6 +108,56 @@
             "user_editable": true,
             "rules": "required|string",
             "field_type": "text"
+        },
+        {
+            "name": "Register Commands On Boot",
+            "description": "Re-register slash commands with Discord on every boot. Set to false to only register manually via `npm run register-commands`.",
+            "env_variable": "REGISTER_COMMANDS_ON_BOOT",
+            "default_value": "true",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "required|string|in:true,false",
+            "field_type": "text"
+        },
+        {
+            "name": "Spotify Client ID",
+            "description": "From a Spotify Developer Dashboard app (developer.spotify.com/dashboard). Required for /jamiematt and Spotify links via /play.",
+            "env_variable": "SPOTIFY_CLIENT_ID",
+            "default_value": "",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "nullable|string",
+            "field_type": "text"
+        },
+        {
+            "name": "Spotify Client Secret",
+            "description": "From the same Spotify Developer Dashboard app as the Client ID.",
+            "env_variable": "SPOTIFY_CLIENT_SECRET",
+            "default_value": "",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "nullable|string",
+            "field_type": "text"
+        },
+        {
+            "name": "Spotify Playlist URL",
+            "description": "The Spotify playlist /jamiematt plays. Defaults to a daily-rotating Spotify editorial playlist.",
+            "env_variable": "SPOTIFY_PLAYLIST_URL",
+            "default_value": "https://open.spotify.com/playlist/37i9dQZF1FwL1Q3Lx3jRwp",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "nullable|string",
+            "field_type": "text"
+        },
+        {
+            "name": "Playlist Refresh Hours",
+            "description": "How often (in hours) to re-fetch the Spotify playlist's tracklist and re-resolve it against YouTube in the background, in addition to the refresh that always happens on boot.",
+            "env_variable": "PLAYLIST_REFRESH_HOURS",
+            "default_value": "12",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "required|integer|min:1",
+            "field_type": "text"
         }
     ]
 }
