@@ -255,20 +255,31 @@ console at all.
   bot`**: this is YouTube's anti-bot check, which is markedly stricter for
   datacenter/hosting-provider IPs (exactly what a Pterodactyl host runs on)
   than for a home connection — confirmed happening in practice during this
-  project's own development. `youtubeResolver.js` already retries once with
-  a different client identity (`YTDLP_EXTRACTOR_ARGS`, default
-  `youtube:player_client=android`) specifically to work around this, so a
-  single occurrence in the console (a "default client failed, retrying..."
-  warning) followed by success is expected and not a problem. If it's
-  failing even after that retry, the fallback client itself may need
-  changing — this is an active, shifting area (YouTube's checks change every
-  few weeks, yt-dlp ships counter-fixes to match), so check
-  [yt-dlp's wiki](https://github.com/yt-dlp/yt-dlp/wiki) for the current
-  best client before trying values by hand. There's no flag that fixes this
-  with certainty on a datacenter IP — the only fully reliable fix is
-  `--cookies` from a real logged-in browser session, which this project
-  deliberately doesn't automate (it's a manual, periodically-refreshed step
-  outside this bot's scope).
+  project's own development, on *every* client tried (the default, and the
+  `android` fallback `youtubeResolver.js` retries with automatically). If a
+  single "default client failed, retrying..." warning is followed by
+  success, that's the retry working as intended, not a problem. If it's
+  still failing after the retry too, client-spoofing alone isn't enough for
+  this host's IP — the only fully reliable fix at that point is cookies from
+  a real logged-in browser session:
+  1. In a browser where you're logged into YouTube, install a cookie-export
+     extension (e.g. "Get cookies.txt LOCALLY" for Chrome/Firefox).
+  2. Visit youtube.com, export cookies for that site as a Netscape-format
+     `cookies.txt`.
+  3. Upload that file to the server at `bin/cookies.txt` (via Pterodactyl's
+     File Manager or SFTP) — `youtubeResolver.js` picks it up automatically
+     from there, no restart-and-reconfigure needed (or point
+     `YTDLP_COOKIES_FILE` at a different path).
+  4. Cookies expire/get invalidated over time (how often varies) and will
+     need re-exporting when that happens — this is a real, ongoing manual
+     step outside what this bot can automate, and one of the trade-offs
+     that came with choosing YouTube as an audio source in the first place.
+
+  Separately, this is an active, shifting area regardless — YouTube's checks
+  change every few weeks and yt-dlp ships counter-fixes to match, so the
+  current best fallback client (`YTDLP_EXTRACTOR_ARGS`) may also need
+  revisiting later; check [yt-dlp's wiki](https://github.com/yt-dlp/yt-dlp/wiki)
+  for current guidance before trying values by hand.
 - **`/jamiematt`/Spotify links via `/play` say they can't reach Spotify**:
   double check `SPOTIFY_CLIENT_ID`/`SPOTIFY_CLIENT_SECRET` are set correctly
   from your Spotify Developer Dashboard app — no other Spotify-side setup

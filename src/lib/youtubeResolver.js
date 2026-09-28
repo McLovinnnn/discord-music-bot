@@ -1,14 +1,32 @@
 'use strict';
 
+const fs = require('node:fs');
+const path = require('node:path');
 const { execFile } = require('node:child_process');
 const { promisify } = require('node:util');
-const { getBinaryPath } = require('./ytdlp');
+const { getBinaryPath, BIN_DIR } = require('./ytdlp');
 
 const execFileAsync = promisify(execFile);
 const TIMEOUT_MS = 20_000;
 // yt-dlp can produce a lot of stdout for some queries (format lists etc.) -
 // this is generous headroom for the --print/--get-url calls actually used here.
 const MAX_BUFFER = 10 * 1024 * 1024;
+
+// On a datacenter/hosting-provider IP, YouTube's bot check can be strict
+// enough that forcing a different client (see FALLBACK_EXTRACTOR_ARGS below)
+// still isn't enough - confirmed in practice during this project's own
+// deployment. The only fully reliable fix at that point is real cookies from
+// a logged-in browser session (yt-dlp's own guidance, not something this
+// project can automate). If a cookies.txt file (Netscape format - export via
+// a browser extension like "Get cookies.txt LOCALLY") is placed at this
+// path, it's used automatically; otherwise this is a no-op, so nothing here
+// requires cookies to work at all. Lives in bin/ deliberately - already
+// gitignored, so a cookies file dropped there never risks being committed.
+const COOKIES_PATH = process.env.YTDLP_COOKIES_FILE || path.join(BIN_DIR, 'cookies.txt');
+
+function cookiesArgs() {
+  return fs.existsSync(COOKIES_PATH) ? ['--cookies', COOKIES_PATH] : [];
+}
 
 /**
  * Extracts a video ID from a direct YouTube link (youtube.com/watch?v=,
@@ -88,7 +106,8 @@ const FALLBACK_EXTRACTOR_ARGS = process.env.YTDLP_EXTRACTOR_ARGS || 'youtube:pla
 
 async function execYtdlp(args) {
   const env = { ...process.env, PYTHONIOENCODING: 'utf-8' };
-  const { stdout } = await execFileAsync(getBinaryPath(), args, { timeout: TIMEOUT_MS, maxBuffer: MAX_BUFFER, env, encoding: 'buffer' });
+  const fullArgs = [...cookiesArgs(), ...args];
+  const { stdout } = await execFileAsync(getBinaryPath(), fullArgs, { timeout: TIMEOUT_MS, maxBuffer: MAX_BUFFER, env, encoding: 'buffer' });
   return decodeYtdlpOutput(stdout).trim();
 }
 
